@@ -1,5 +1,5 @@
-import { EventsHandler, IEventHandler } from '@nestjs/cqrs';
-import { TickerEvent } from './entities/ticker.entity';
+import { EventsHandler, IEventHandler } from "@nestjs/cqrs";
+import { TickerEvent } from "./entities/ticker.entity";
 
 type Deal = {
   tradingPair: string;
@@ -17,15 +17,12 @@ type Deal = {
 export class TickerEventHandler implements IEventHandler<TickerEvent> {
   private bestDeals: Map<string, Deal> = new Map();
   private pairExchangeOffers: Map<string, Map<string, TickerEvent>> = new Map();
-  private binLast;
-  private bitLast;
-  private bestDeal: number = 0.0;
   private minMargin: number = 0.1;
 
   printDeal(deal: Deal) {
     const sum = deal.totalMargins.reduce(
       (accumulator, currentValue) => accumulator + currentValue,
-      0,
+      0
     );
     const length = deal.totalMargins.length;
     const avg = length == 0 ? 0 : sum / deal.totalMargins.length;
@@ -35,17 +32,21 @@ export class TickerEventHandler implements IEventHandler<TickerEvent> {
     console.log(`Timestamp@${new Date().toISOString()}`);
     console.log(`Buy@${deal.buyAt.data.exchange}: ${deal.buyAt.data.ask}`);
     console.log(`Sell@${deal.sellAt.data.exchange}: ${deal.sellAt.data.bid}`);
-    console.log(`Trades: ${deal.totalTrades} / ${deal.totalMargins}`);
+    console.log(
+      `Trades: ${deal.totalTrades} => ${deal.totalMargins.map((m) =>
+        m.toFixed(4)
+      )}`
+    );
     console.log(
       `Margin: ${deal.spread.toFixed(4)} / ${deal.margin.toFixed(
-        4,
-      )}% / ${avg.toFixed(4)}%`,
+        4
+      )}% / ${avg.toFixed(4)}%`
     );
   }
 
   challengeBestDeal(deal: Deal) {
     if (deal.buyAt === undefined || deal.sellAt === undefined) {
-      throw new Error('Buy and sell events must be defined');
+      throw new Error("Buy and sell events must be defined");
     }
 
     const bestDeal = this.bestDeals.get(deal.tradingPair);
@@ -85,11 +86,11 @@ export class TickerEventHandler implements IEventHandler<TickerEvent> {
     let sellAt: TickerEvent;
 
     if (a.data.symbol !== b.data.symbol) {
-      throw new Error('Trading pairs must be the same');
+      throw new Error("Trading pairs must be the same");
     }
 
     if (a.data.exchange === b.data.exchange) {
-      throw new Error('Exchanges must be different');
+      throw new Error("Exchanges must be different");
     }
 
     if (a.data.ask < b.data.bid) {
@@ -141,46 +142,5 @@ export class TickerEventHandler implements IEventHandler<TickerEvent> {
         }
       }
     });
-  }
-
-  handle2(event: TickerEvent): any {
-    if (event.data.exchange === 'Binance') {
-      this.binLast = event.data;
-    } else if (event.data.exchange === 'Bitfinex') {
-      this.bitLast = event.data;
-    }
-
-    if (this.binLast && this.bitLast) {
-      const spreadBinance = this.binLast.bid - this.bitLast.ask;
-      const spreadBitfinex = this.bitLast.bid - this.binLast.ask;
-
-      let buyAt, sellAt, buyIn, sellIn, spread;
-
-      if (spreadBinance > 0) {
-        buyIn = 'Bitfinex';
-        sellIn = 'Binance';
-        buyAt = this.bitLast.ask;
-        sellAt = this.binLast.bid;
-        spread = spreadBinance;
-      } else if (spreadBitfinex > 0) {
-        buyIn = 'Binance';
-        sellIn = 'Bitfinex';
-        buyAt = this.binLast.ask;
-        sellAt = this.bitLast.bid;
-        spread = spreadBitfinex;
-      }
-
-      if (spread) {
-        const margin: number = (spread / buyAt) * 100;
-        if (margin > this.bestDeal) {
-          this.bestDeal = margin;
-          console.log(`--------------------------------`);
-          console.log(`Timestamp@${new Date().toISOString()}`);
-          console.log(`Buy@${buyIn}: ${buyAt}`);
-          console.log(`Sell@${sellIn}: ${sellAt}`);
-          console.log(`Profit: ${spread.toFixed(4)} / ${margin.toFixed(4)}%`);
-        }
-      }
-    }
   }
 }
