@@ -18,6 +18,29 @@ export class TickerEventHandler implements IEventHandler<TickerEvent> {
   private bestDeals: Map<string, Deal> = new Map();
   private pairExchangeOffers: Map<string, Map<string, TickerEvent>> = new Map();
   private minMargin: number = 0.1;
+  private minSeconds: number = 60;
+
+  handle(event: TickerEvent): any {
+    const { exchange, symbol, ask, bid } = event.data;
+    // Initialize the object for the symbol if it doesn't exist
+    if (!this.pairExchangeOffers[symbol]) {
+      this.pairExchangeOffers[symbol] = {};
+    }
+
+    this.pairExchangeOffers[symbol][exchange] = event;
+    const pairExchangeOffers: Map<string, TickerEvent> =
+      this.pairExchangeOffers[symbol];
+
+    Object.entries(pairExchangeOffers).forEach(([key, ticker]) => {
+      if (ticker.data.exchange !== exchange) {
+        const deal = this.comparePrices(event, ticker);
+
+        if (deal !== null) {
+          this.challengeBestDeal(deal);
+        }
+      }
+    });
+  }
 
   printDeal(deal: Deal) {
     const sum = deal.totalMargins.reduce(
@@ -30,8 +53,16 @@ export class TickerEventHandler implements IEventHandler<TickerEvent> {
     console.log(`--------------------------------`);
     console.log(`TradingPair@${deal.tradingPair}`);
     console.log(`Timestamp@${new Date().toISOString()}`);
-    console.log(`Buy@${deal.buyAt.data.exchange}: ${deal.buyAt.data.ask}`);
-    console.log(`Sell@${deal.sellAt.data.exchange}: ${deal.sellAt.data.bid}`);
+    console.log(
+      `Buy@${deal.buyAt.data.exchange}: ${deal.buyAt.data.ask}@${new Date(
+        deal.buyAt.data.timestamp
+      ).toISOString()}`
+    );
+    console.log(
+      `Sell@${deal.sellAt.data.exchange}: ${deal.sellAt.data.bid}@${new Date(
+        deal.sellAt.data.timestamp
+      ).toISOString()}`
+    );
     console.log(
       `Trades: ${deal.totalTrades} => ${deal.totalMargins.map((m) =>
         m.toFixed(4)
@@ -93,6 +124,10 @@ export class TickerEventHandler implements IEventHandler<TickerEvent> {
       throw new Error("Exchanges must be different");
     }
 
+    const timeDiffSeconds = Math.abs(
+      (a.data.timestamp - b.data.timestamp) / 1000
+    );
+
     if (a.data.ask < b.data.bid) {
       profit = b.data.bid - a.data.ask;
       buyAt = a;
@@ -101,6 +136,21 @@ export class TickerEventHandler implements IEventHandler<TickerEvent> {
       profit = a.data.bid - b.data.ask;
       buyAt = b;
       sellAt = a;
+    } else {
+      return null;
+    }
+
+    if (timeDiffSeconds > this.minSeconds) {
+      /*console.log(
+        `No deal ${timeDiffSeconds} seconds => Buy: ${buyAt.data.symbol}@${
+          buyAt.data.exchange
+        }@${new Date(buyAt.data.timestamp).toISOString()} Sell: ${
+          sellAt.data.symbol
+        }@${sellAt.data.exchange}@${new Date(
+          sellAt.data.timestamp
+        ).toISOString()} `
+      );*/
+      return null;
     }
 
     if (profit > 0) {
@@ -120,27 +170,5 @@ export class TickerEventHandler implements IEventHandler<TickerEvent> {
     } else {
       return null; // no deal
     }
-  }
-
-  handle(event: TickerEvent): any {
-    const { exchange, symbol, ask, bid } = event.data;
-    // Initialize the object for the symbol if it doesn't exist
-    if (!this.pairExchangeOffers[symbol]) {
-      this.pairExchangeOffers[symbol] = {};
-    }
-
-    this.pairExchangeOffers[symbol][exchange] = event;
-    const pairExchangeOffers: Map<string, TickerEvent> =
-      this.pairExchangeOffers[symbol];
-
-    Object.entries(pairExchangeOffers).forEach(([key, ticker]) => {
-      if (ticker.data.exchange !== exchange) {
-        const deal = this.comparePrices(event, ticker);
-
-        if (deal !== null) {
-          this.challengeBestDeal(deal);
-        }
-      }
-    });
   }
 }
