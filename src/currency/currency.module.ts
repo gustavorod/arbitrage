@@ -1,9 +1,9 @@
 import { Module } from "@nestjs/common";
-import { TickerEventHandler } from "./trade.handler";
 import { CqrsModule } from "@nestjs/cqrs";
+import { CurrencyGateway } from "./currency.gateway";
 
 @Module({
   imports: [CqrsModule],
-  providers: [TickerEventHandler],
+  providers: [CurrencyGateway],
 })
-export class TradeModule {}
+export class CurrencyModule {}

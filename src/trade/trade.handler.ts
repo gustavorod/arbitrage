@@ -1,5 +1,8 @@
-import { EventsHandler, IEventHandler } from "@nestjs/cqrs";
+import { EventBus, EventsHandler, IEventHandler } from "@nestjs/cqrs";
 import { TickerEvent } from "./entities/ticker.entity";
+import { ConfigService } from "@nestjs/config";
+import { OrderEvent } from "./entities/order.entity";
+import { generateNumericId } from "../utils/config";
 
 type Deal = {
   tradingPair: string;
@@ -17,11 +20,33 @@ type Deal = {
 export class TickerEventHandler implements IEventHandler<TickerEvent> {
   private bestDeals: Map<string, Deal> = new Map();
   private pairExchangeOffers: Map<string, Map<string, TickerEvent>> = new Map();
-  private minMargin: number = 0.1;
-  private minSeconds: number = 60;
+  private MIN_MARGIN: number = 0.2;
+  private MIN_SECONDS: number = 60;
+  private canTrade: boolean = true;
+
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly eventBus: EventBus
+  ) {}
 
   handle(event: TickerEvent): any {
     const { exchange, symbol, ask, bid } = event.data;
+
+    if (this.canTrade) {
+      this.eventBus.publish(
+        new OrderEvent({
+          exchange,
+          type: "SELL",
+          amount: 0.0005,
+          price: bid + 1, //- 0.00002,
+          symbol: symbol,
+          timestamp: Date.now(),
+          id: generateNumericId(),
+        })
+      );
+      this.canTrade = false;
+    }
+
     // Initialize the object for the symbol if it doesn't exist
     if (!this.pairExchangeOffers[symbol]) {
       this.pairExchangeOffers[symbol] = {};
@@ -86,7 +111,10 @@ export class TickerEventHandler implements IEventHandler<TickerEvent> {
 
     if (bestDeal) {
       const diffSeconds = (deal.timestamp - bestDeal.timestamp) / 1000;
-      if (deal.margin > bestDeal.margin && diffSeconds > 300) {
+      if (
+        deal.margin > this.MIN_MARGIN /*bestDeal.margin*/ &&
+        diffSeconds > 180
+      ) {
         newBestDeal = deal;
         newBestDeal.totalTrades = bestDeal.totalTrades;
         newBestDeal.totalMargins = bestDeal.totalMargins;
@@ -98,12 +126,12 @@ export class TickerEventHandler implements IEventHandler<TickerEvent> {
 
     if (newBestDeal) {
       // Simulate a trade
-      if (newBestDeal.margin > this.minMargin) {
+      if (newBestDeal.margin > this.MIN_MARGIN) {
         newBestDeal.totalTrades++;
         newBestDeal.totalMargins.push(newBestDeal.margin);
       }
 
-      if (newBestDeal.margin > this.minMargin || isFirst) {
+      if (newBestDeal.margin > this.MIN_MARGIN || isFirst) {
         this.printDeal(newBestDeal);
       }
 
@@ -140,16 +168,8 @@ export class TickerEventHandler implements IEventHandler<TickerEvent> {
       return null;
     }
 
-    if (timeDiffSeconds > this.minSeconds) {
-      /*console.log(
-        `No deal ${timeDiffSeconds} seconds => Buy: ${buyAt.data.symbol}@${
-          buyAt.data.exchange
-        }@${new Date(buyAt.data.timestamp).toISOString()} Sell: ${
-          sellAt.data.symbol
-        }@${sellAt.data.exchange}@${new Date(
-          sellAt.data.timestamp
-        ).toISOString()} `
-      );*/
+    // Maximum time difference between the two prices
+    if (timeDiffSeconds > this.MIN_SECONDS) {
       return null;
     }
 

@@ -1,18 +1,22 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { BitfinexGateway } from "./bitfinex.gateway";
 import { ConfigService } from "@nestjs/config";
 import { CqrsModule } from "@nestjs/cqrs";
 import { generateNumericId, mockedConfigService } from "../utils/config";
 import { OrderEvent } from "../trade/entities/order.entity";
+import { BinanceGateway } from "./binance.gateway";
 
-describe("BitfinexGateway", () => {
-  let gateway: BitfinexGateway;
+describe("BinanceGateway", () => {
+  let gateway: BinanceGateway;
 
-  beforeEach(async () => {
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  beforeAll(async () => {
     const app: TestingModule = await Test.createTestingModule({
       imports: [CqrsModule],
       providers: [
-        BitfinexGateway,
+        BinanceGateway,
         {
           provide: ConfigService,
           useValue: mockedConfigService,
@@ -20,8 +24,10 @@ describe("BitfinexGateway", () => {
       ],
     }).compile();
 
-    gateway = app.get<BitfinexGateway>(BitfinexGateway);
-  });
+    gateway = app.get<BinanceGateway>(BinanceGateway);
+    gateway.afterInit();
+    await sleep(10000);
+  }, 15000);
 
   it("should be defined", () => {
     expect(gateway).toBeDefined();
@@ -30,14 +36,10 @@ describe("BitfinexGateway", () => {
   it("should place a buy order", () => {
     const amount = 0.00006;
     const price = 31000;
-    const balance = [[0, "BTC", 1]];
-
-    gateway.afterInit();
-    gateway.updateBalances(balance);
 
     const event: OrderEvent = {
       data: {
-        exchange: "BITFINEX",
+        exchange: "BINANCE",
         id: generateNumericId(),
         type: "SELL",
         symbol: "BTC",

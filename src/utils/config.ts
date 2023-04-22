@@ -13,11 +13,11 @@ const mockedConfigService = {
   },
 };
 
-function generateNumericId(): number {
-  const uuid = uuidv4().replace(/-/g, ""); // remove dashes from UUID string
-  const hex = uuid.substr(0, 16); // take the first 16 hexadecimal digits
-  const decimal = parseInt(hex, 16); // convert to decimal
-  return decimal;
+function generateNumericId() {
+  const utcDate = new Date().toISOString().slice(0, 10); // Get the current UTC date in format YYYY-MM-DD
+  const randomNumber = Math.floor(Math.random() * 100000); // Generate a random number between 0 and 100,000
+  const cid = parseInt(utcDate.replace(/-/g, "") + randomNumber); // Remove the dashes from the date and append the random number
+  return cid;
 }
 
 export { mockedConfigService, generateNumericId };
