@@ -24,7 +24,7 @@ type Deal = {
 export class TickerEventHandler implements OnGatewayInit {
   private bestDeals: Map<string, Deal> = new Map();
   private pairExchangeOffers: Map<string, Map<string, TickerEvent>> = new Map();
-  private MIN_MARGIN: number = 0.0;
+  private MIN_MARGIN: number = 0.0001;
   private MIN_SECONDS: number = 5;
   private MIN_SECONDS_TRADE: number = 60;
   private MIN_SECONDS_TRANSFER: number = 60 * 13;
@@ -75,7 +75,7 @@ export class TickerEventHandler implements OnGatewayInit {
       }
     });
 
-    //this.equilibrateBalancesHalfHalf();
+    this.equilibrateBalancesHalfHalf();
   }
 
   printDeal(deal: Deal) {
@@ -140,7 +140,7 @@ export class TickerEventHandler implements OnGatewayInit {
       if (newBestDeal.margin > this.MIN_MARGIN) {
         newBestDeal.totalTrades++;
         newBestDeal.totalMargins.push(newBestDeal.margin);
-        //this.closeDeal(newBestDeal);
+        this.closeDeal(newBestDeal);
       }
 
       if (newBestDeal.margin > this.MIN_MARGIN || isFirst) {
@@ -173,16 +173,21 @@ export class TickerEventHandler implements OnGatewayInit {
       return null;
     }
 
-    if (a.data.ask < b.data.bid) {
-      profit = b.data.bid - a.data.ask;
+    const profitOne = b.data.bid - a.data.ask;
+    const profitTwo = a.data.bid - b.data.ask;
+
+    if (profitOne <= 0 && profitTwo <= 0) {
+      return null;
+    }
+
+    if (profitOne > profitTwo) {
+      profit = profitOne;
       buyAt = a;
       sellAt = b;
-    } else if (b.data.ask < a.data.bid) {
-      profit = a.data.bid - b.data.ask;
+    } else {
+      profit = profitTwo;
       buyAt = b;
       sellAt = a;
-    } else {
-      return null;
     }
 
     if (profit > 0) {
@@ -228,8 +233,8 @@ export class TickerEventHandler implements OnGatewayInit {
     const buyData = deal.buyAt.data;
     const sellData = deal.sellAt.data;
 
-    const priceBuy: number = Number((buyData.ask - 0.00001).toFixed(5));
-    const priceSell: number = Number((sellData.bid + 0.00001).toFixed(5));
+    const priceBuy: number = Number(buyData.ask.toFixed(4));
+    const priceSell: number = Number(sellData.bid.toFixed(4));
 
     const buyUsdBalance = Math.min(
       this.getBalance(buyData.exchange, "USDT") * 0.95,
@@ -268,10 +273,11 @@ export class TickerEventHandler implements OnGatewayInit {
       id: generateNumericId(),
     });
 
+    this.lastTrade = Date.now();
+
     this.eventEmitter.emit("order.created", buyAtEvent);
     this.eventEmitter.emit("order.created", sellAtEvent);
 
-    this.lastTrade = Date.now();
     console.log("Trade", deal);
   }
 

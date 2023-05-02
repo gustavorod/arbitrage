@@ -187,10 +187,10 @@ export class BinanceGateway implements OnGatewayInit {
           exchange: this.exchangeCode, // exchange
           timestamp: Date.now(), // timestamp
           symbol: tradingPair, // symbol
-          bid: message.b, // best bid price
-          bidQty: message.B, // best bid qty
-          ask: message.a, // best ask price
-          askQty: message.A, // best ask qty
+          bid: parseFloat(message.b), // best bid price
+          bidQty: parseFloat(message.B), // best bid qty
+          ask: parseFloat(message.a), // best ask price
+          askQty: parseFloat(message.A), // best ask qty
         };
 
         this.eventEmitter.emit("ticker.created", new TickerEvent(normalized));
