@@ -24,7 +24,7 @@ type Deal = {
 export class TickerEventHandler implements OnGatewayInit {
   private bestDeals: Map<string, Deal> = new Map();
   private pairExchangeOffers: Map<string, Map<string, TickerEvent>> = new Map();
-  private MIN_MARGIN: number = 0.0001;
+  private MIN_MARGIN: number = 0.5;
   private MIN_SECONDS: number = 5;
   private MIN_SECONDS_TRADE: number = 60;
   private MIN_SECONDS_TRANSFER: number = 60 * 13;
