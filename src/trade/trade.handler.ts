@@ -1,8 +1,12 @@
-import { EventBus, EventsHandler, IEventHandler } from "@nestjs/cqrs";
 import { TickerEvent } from "./entities/ticker.entity";
 import { ConfigService } from "@nestjs/config";
 import { OrderEvent } from "./entities/order.entity";
 import { generateNumericId } from "../utils/config";
+import { BinanceGateway } from "../binance/binance.gateway";
+import { BitfinexGateway } from "../bitfinex/bitfinex.gateway";
+import { TransferEvent } from "./entities/transfer.entity";
+import { EventEmitter2, OnEvent } from "@nestjs/event-emitter";
+import { WebSocketGateway, OnGatewayInit } from "@nestjs/websockets";
 
 type Deal = {
   tradingPair: string;
@@ -16,36 +20,41 @@ type Deal = {
   sellAt: TickerEvent;
 };
 
-@EventsHandler(TickerEvent)
-export class TickerEventHandler implements IEventHandler<TickerEvent> {
+@WebSocketGateway()
+export class TickerEventHandler implements OnGatewayInit {
   private bestDeals: Map<string, Deal> = new Map();
   private pairExchangeOffers: Map<string, Map<string, TickerEvent>> = new Map();
-  private MIN_MARGIN: number = 0.2;
-  private MIN_SECONDS: number = 60;
+  private MIN_MARGIN: number = 0.0;
+  private MIN_SECONDS: number = 5;
+  private MIN_SECONDS_TRADE: number = 60;
+  private MIN_SECONDS_TRANSFER: number = 60 * 13;
+  private TRANSFER_DIFF: number = 25;
+  private MAX_BUY_USDT: number = 30;
   private canTrade: boolean = true;
+  private canTransfer: boolean = true;
+  private tradingSymbols: Array<string>;
+  private lastTransfer: number;
+  private lastTrade: number;
 
   constructor(
     private readonly configService: ConfigService,
-    private readonly eventBus: EventBus
-  ) {}
+    private readonly eventEmitter: EventEmitter2,
+    private readonly binanceGateway: BinanceGateway,
+    private readonly bitfinexGateway: BitfinexGateway
+  ) {
+    this.tradingSymbols = this.configService.get<string>("SYMBOLS").split(",");
+    this.tradingSymbols.push("USDT");
+    this.lastTransfer = Date.now();
+    this.lastTrade = Date.now() - this.MIN_SECONDS_TRADE * 1000;
+  }
 
-  handle(event: TickerEvent): any {
+  afterInit(server: any) {
+    console.log("TickerEventHandler initialized", this.tradingSymbols);
+  }
+
+  @OnEvent("ticker.created")
+  ticker(event: TickerEvent): any {
     const { exchange, symbol, ask, bid } = event.data;
-
-    if (this.canTrade) {
-      this.eventBus.publish(
-        new OrderEvent({
-          exchange,
-          type: "SELL",
-          amount: 0.0005,
-          price: bid + 1, //- 0.00002,
-          symbol: symbol,
-          timestamp: Date.now(),
-          id: generateNumericId(),
-        })
-      );
-      this.canTrade = false;
-    }
 
     // Initialize the object for the symbol if it doesn't exist
     if (!this.pairExchangeOffers[symbol]) {
@@ -65,6 +74,8 @@ export class TickerEventHandler implements IEventHandler<TickerEvent> {
         }
       }
     });
+
+    //this.equilibrateBalancesHalfHalf();
   }
 
   printDeal(deal: Deal) {
@@ -129,6 +140,7 @@ export class TickerEventHandler implements IEventHandler<TickerEvent> {
       if (newBestDeal.margin > this.MIN_MARGIN) {
         newBestDeal.totalTrades++;
         newBestDeal.totalMargins.push(newBestDeal.margin);
+        //this.closeDeal(newBestDeal);
       }
 
       if (newBestDeal.margin > this.MIN_MARGIN || isFirst) {
@@ -156,6 +168,11 @@ export class TickerEventHandler implements IEventHandler<TickerEvent> {
       (a.data.timestamp - b.data.timestamp) / 1000
     );
 
+    // Maximum time difference between the two prices
+    if (timeDiffSeconds > this.MIN_SECONDS) {
+      return null;
+    }
+
     if (a.data.ask < b.data.bid) {
       profit = b.data.bid - a.data.ask;
       buyAt = a;
@@ -165,11 +182,6 @@ export class TickerEventHandler implements IEventHandler<TickerEvent> {
       buyAt = b;
       sellAt = a;
     } else {
-      return null;
-    }
-
-    // Maximum time difference between the two prices
-    if (timeDiffSeconds > this.MIN_SECONDS) {
       return null;
     }
 
@@ -190,5 +202,135 @@ export class TickerEventHandler implements IEventHandler<TickerEvent> {
     } else {
       return null; // no deal
     }
+  }
+
+  getBalance(exchange: string, symbol: string) {
+    if (exchange === "BINANCE") {
+      return this.binanceGateway.getBalance(symbol);
+    } else if (exchange === "BITFINEX") {
+      return this.bitfinexGateway.getBalance(symbol);
+    } else {
+      throw new Error("Exchange not supported");
+    }
+  }
+
+  closeDeal(deal: Deal) {
+    if (!this.canTrade) {
+      return;
+    }
+
+    const timeDiffSeconds = Math.abs((Date.now() - this.lastTrade) / 1000);
+
+    if (timeDiffSeconds < this.MIN_SECONDS_TRADE) {
+      return;
+    }
+
+    const buyData = deal.buyAt.data;
+    const sellData = deal.sellAt.data;
+
+    const priceBuy: number = Number((buyData.ask - 0.00001).toFixed(5));
+    const priceSell: number = Number((sellData.bid + 0.00001).toFixed(5));
+
+    const buyUsdBalance = Math.min(
+      this.getBalance(buyData.exchange, "USDT") * 0.95,
+      this.MAX_BUY_USDT
+    );
+
+    // Calculate the max amount to buy based on price
+    const buyMaxAmount = buyUsdBalance / priceBuy;
+    const sellSymbolBalance = this.getBalance(
+      sellData.exchange,
+      sellData.symbol.replace("USDT", "")
+    );
+
+    // Buy and sell the same amount
+    const amount: number = Number(
+      Math.min(buyMaxAmount, sellSymbolBalance).toFixed(6)
+    );
+
+    const buyAtEvent = new OrderEvent({
+      exchange: buyData.exchange,
+      type: "BUY",
+      amount,
+      price: priceBuy,
+      symbol: buyData.symbol,
+      timestamp: Date.now(),
+      id: generateNumericId(),
+    });
+
+    const sellAtEvent = new OrderEvent({
+      exchange: sellData.exchange,
+      type: "SELL",
+      amount,
+      price: priceSell,
+      symbol: sellData.symbol,
+      timestamp: Date.now(),
+      id: generateNumericId(),
+    });
+
+    this.eventEmitter.emit("order.created", buyAtEvent);
+    this.eventEmitter.emit("order.created", sellAtEvent);
+
+    this.lastTrade = Date.now();
+    console.log("Trade", deal);
+  }
+
+  equilibrateBalancesHalfHalf() {
+    if (!this.canTransfer) {
+      return;
+    }
+
+    const timeDiffSeconds = Math.abs((Date.now() - this.lastTransfer) / 1000);
+
+    if (timeDiffSeconds < this.MIN_SECONDS_TRANSFER) {
+      return;
+    }
+
+    const balanceBinance = this.binanceGateway.getBalanceAll();
+    const balanceBitfinex = this.bitfinexGateway.getBalanceAll();
+
+    if (balanceBinance.size === 0 || balanceBitfinex.size === 0) {
+      return;
+    }
+
+    this.tradingSymbols.forEach((key) => {
+      const valueBinance: number = balanceBinance.get(key) || 0;
+      const valueBitfinex: number =
+        balanceBitfinex.get(key.replace("USDT", "UST")) || 0;
+
+      const difference = valueBinance - valueBitfinex;
+      const transferFrom = difference > 0 ? "BINANCE" : "BITFINEX";
+      const existingValue: number =
+        difference > 0 ? valueBitfinex : valueBinance;
+      const transferAmount =
+        Math.floor((valueBinance + valueBitfinex) / 2) - existingValue;
+      const perc = (transferAmount / (valueBinance + valueBitfinex)) * 100;
+
+      if (perc > this.TRANSFER_DIFF && transferAmount > 1) {
+        const toAddressExchange =
+          transferFrom === "BINANCE" ? "BITFINEX" : "BINANCE";
+        const envKey = `${toAddressExchange}_ADDRESS_${key}`;
+        const toAddress = this.configService.get(envKey);
+
+        if (!toAddress) {
+          throw new Error(`Missing env variable ${envKey}`);
+        }
+
+        const transferEvent = new TransferEvent({
+          id: generateNumericId(),
+          exchange: transferFrom,
+          timestamp: Date.now(),
+          symbol:
+            transferFrom === "BITFINEX" ? key.replace("USDT", "UST") : key,
+          amount: transferAmount,
+          toAddress,
+        });
+
+        console.log("transferEvent: ", transferEvent);
+        this.eventEmitter.emit("transfer.created", transferEvent);
+      }
+    });
+
+    this.lastTransfer = Date.now();
   }
 }

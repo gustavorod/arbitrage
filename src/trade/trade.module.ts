@@ -1,9 +1,10 @@
 import { Module } from "@nestjs/common";
 import { TickerEventHandler } from "./trade.handler";
-import { CqrsModule } from "@nestjs/cqrs";
+import { BitfinexModule } from "../bitfinex/bitfinex.module";
+import { BinanceModule } from "../binance/binance.module";
 
 @Module({
-  imports: [CqrsModule],
+  imports: [BitfinexModule, BinanceModule],
   providers: [TickerEventHandler],
 })
 export class TradeModule {}

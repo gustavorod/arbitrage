@@ -1,5 +1,3 @@
-import { IEvent } from "@nestjs/cqrs";
-
 export interface IOrderEventData {
   id: number;
   timestamp: number;
@@ -10,6 +8,6 @@ export interface IOrderEventData {
   exchange: string;
 }
 
-export class OrderEvent implements IEvent {
+export class OrderEvent {
   constructor(public readonly data: IOrderEventData) {}
 }

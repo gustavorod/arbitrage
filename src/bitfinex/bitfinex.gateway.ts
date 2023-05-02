@@ -7,6 +7,10 @@ import { ConfigService } from "@nestjs/config";
 import * as crypto from "crypto-js";
 import { OrderEvent } from "../trade/entities/order.entity";
 import { HttpService } from "@nestjs/axios";
+import { catchError, firstValueFrom } from "rxjs";
+import { AxiosError } from "axios";
+import { TransferEvent } from "../trade/entities/transfer.entity";
+import { EventEmitter2, OnEvent } from "@nestjs/event-emitter";
 
 type Book = {
   price: number;
@@ -14,11 +18,8 @@ type Book = {
   amount: number;
 };
 
-@EventsHandler(OrderEvent)
 @WebSocketGateway()
-export class BitfinexGateway
-  implements OnGatewayInit, IEventHandler<OrderEvent>
-{
+export class BitfinexGateway implements OnGatewayInit {
   private CAN_TRADE: boolean = true;
 
   private readonly logger: Logger = new Logger(BitfinexGateway.name);
@@ -35,7 +36,7 @@ export class BitfinexGateway
 
   constructor(
     private readonly configService: ConfigService,
-    private readonly eventBus: EventBus,
+    private eventEmitter: EventEmitter2,
     private readonly httpService: HttpService
   ) {
     this.tradingSymbols = this.configService.get<string>("SYMBOLS").split(",");
@@ -43,9 +44,29 @@ export class BitfinexGateway
     this.apiSecret = this.configService.get<string>("BITFINEX_CLIENT_SECRET");
   }
 
-  handle(event: OrderEvent): any {
+  getBalanceAll(): Map<string, number> {
+    return this.balances;
+  }
+
+  getBalance(symbol: string) {
+    if (!this.balances.has(symbol)) {
+      throw new Error(`Balance for ${symbol} not found`);
+    }
+
+    return this.balances.get(symbol);
+  }
+
+  @OnEvent("order.created")
+  order(event: OrderEvent): any {
     if (event.data.exchange === this.exchangeCode) {
       this.trade(event);
+    }
+  }
+
+  @OnEvent("transfer.created")
+  transfer(event: TransferEvent): any {
+    if (event.data.exchange === this.exchangeCode) {
+      this.transferTo(event);
     }
   }
 
@@ -55,7 +76,7 @@ export class BitfinexGateway
     }
 
     this.tradingSymbols.forEach((symbol) => {
-      const tradingPair = `t${symbol}USD`;
+      const tradingPair = `t${symbol}UST`;
       this.clientSocket.send(
         JSON.stringify({
           event: "subscribe",
@@ -120,7 +141,6 @@ export class BitfinexGateway
   message(data) {
     const message = JSON.parse(data.toString());
 
-    //console.log("Unhandled message: ", message);
     if (message.event === "subscribed") {
       this.channelTradingPairs.set(message.chanId, message.pair);
     } else if (Array.isArray(message)) {
@@ -173,19 +193,22 @@ export class BitfinexGateway
             const normalized = {
               exchange: this.exchangeCode, // exchange
               timestamp: Date.now(), // timestamp
-              symbol, // symbol
+              symbol: symbol.replace("UST", "USDT"), // symbol
               bid: bidsTemp[0].price, // best bid price
               bidQty: bidsTemp[0].amount, // best bid qty
               ask: asksTemp[0].price, // best ask price
               askQty: asksTemp[0].amount, // best ask qty
             };
 
-            this.eventBus.publish(new TickerEvent(normalized));
+            this.eventEmitter.emit(
+              "ticker.created",
+              new TickerEvent(normalized)
+            );
           }
         }
-      } else {
-        //console.log("Unhandled message: ", message);
-      }
+      } /*else {
+        console.log("Unhandled message: ", message);
+      }*/
     }
   }
 
@@ -196,22 +219,26 @@ export class BitfinexGateway
 
     const { id, timestamp, type, symbol, amount, price } = event.data;
 
-    const balanceSymbol = type === "BUY" ? "USD" : symbol;
-    const pair = `t${symbol}USD`;
+    const balanceSymbol = type === "BUY" ? "UST" : symbol.replace("USDT", "");
+    const pair = `t${symbol.replace("USDT", "UST")}`;
 
-    if (!this.balances.has(balanceSymbol)) {
-      throw new Error(`Balance for ${balanceSymbol} not found`);
+    const balance = this.getBalance(balanceSymbol);
+
+    let maxAmount = 0;
+
+    if (type === "BUY") {
+      maxAmount =
+        amount * price > balance ? Math.floor(balance / price) : amount;
+    } else {
+      maxAmount = amount > balance ? balance : amount;
     }
-
-    const balance = this.balances.get(balanceSymbol);
-    const maxAmount = amount > balance ? balance : amount;
 
     if (maxAmount <= 0) {
       throw new Error(`Insufficient balance for ${symbol}`);
     }
 
     const amountSignal = type === "BUY" ? maxAmount : -maxAmount;
-    const expiration = Date.now() + 1000 * 120;
+    const expiration = Date.now() + 1000 * 900; // 15 minutes
 
     const body = {
       cid: id,
@@ -225,10 +252,88 @@ export class BitfinexGateway
 
     const newOrder = [0, "on", null, body];
 
-    console.log(`Sending order: ${JSON.stringify(newOrder)}`);
+    console.log(`ORDER@${this.exchangeCode}: ${JSON.stringify(newOrder)}`);
     this.clientSocket.send(JSON.stringify(newOrder));
 
     this.CAN_TRADE = false;
     return true;
+  }
+
+  sign(apiPath, body) {
+    const nonce = (Date.now() * 1000).toString();
+    const params = `/api/${apiPath}${nonce}${JSON.stringify(body)}`;
+
+    const signature = crypto
+      .HmacSHA384(params, this.apiSecret)
+      .toString(crypto.enc.Hex); // The authentication payload is hashed using the private key, the resulting hash is output as a hexadecimal string
+
+    return {
+      params,
+      signature,
+      nonce,
+    };
+  }
+
+  async transferTo(event: TransferEvent) {
+    const eventData = event.data;
+
+    const balance = this.getBalance(eventData.symbol);
+    if (eventData.amount > balance) {
+      throw new Error(
+        `ERROR@${this.exchangeCode}: Insufficient balance for ${eventData.symbol} | ${balance} < ${eventData.amount}`
+      );
+    }
+
+    let method;
+    if (eventData.symbol === "XRP") {
+      method = "RIPPLE";
+    } else if (eventData.symbol === "UST") {
+      method = "TETHERUSDTPLY";
+    } else {
+      method = eventData.symbol;
+    }
+
+    let payload: any = {
+      wallet: "exchange",
+      method,
+      amount: eventData.amount.toString(),
+      address: eventData.toAddress,
+      fee_deduct: 1,
+    };
+
+    if (eventData.toAddressTag) {
+      payload = {
+        ...payload,
+        payment_id: eventData.toAddressTag,
+      };
+    }
+
+    const apiPath = "v2/auth/w/withdraw";
+    const signParams = this.sign(apiPath, payload);
+    const { data } = await firstValueFrom(
+      this.httpService
+        .post(`https://api.bitfinex.com/${apiPath}`, payload, {
+          headers: {
+            "Content-Type": "application/json",
+            "bfx-nonce": signParams.nonce,
+            "bfx-apikey": this.apiKey,
+            "bfx-signature": signParams.signature,
+          },
+        })
+        .pipe(
+          catchError((error: AxiosError) => {
+            console.error(
+              `ERROR@${this.exchangeCode}: ${JSON.stringify(
+                error.response.data
+              )}`
+            );
+            throw "An error happened!";
+          })
+        )
+    );
+
+    console.log(data);
+
+    return data[0];
   }
 }

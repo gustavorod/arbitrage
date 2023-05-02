@@ -1,5 +1,3 @@
-import { IEvent } from "@nestjs/cqrs";
-
 export interface ITickerEventData {
   exchange: string; // exchange
   timestamp: number; // timestamp
@@ -10,6 +8,6 @@ export interface ITickerEventData {
   askQty: number; // best ask qty
 }
 
-export class TickerEvent implements IEvent {
+export class TickerEvent {
   constructor(public readonly data: ITickerEventData) {}
 }
