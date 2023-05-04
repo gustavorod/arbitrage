@@ -6,6 +6,7 @@ import { generateNumericId, mockedConfigService } from "../utils/config";
 import { OrderEvent } from "../trade/entities/order.entity";
 import { TransferEvent } from "../trade/entities/transfer.entity";
 import { HttpModule } from "@nestjs/axios";
+import { EventEmitter2 } from "@nestjs/event-emitter";
 
 describe("BitfinexGateway", () => {
   let gateway: BitfinexGateway;
@@ -22,6 +23,12 @@ describe("BitfinexGateway", () => {
         {
           provide: ConfigService,
           useValue: mockedConfigService,
+        },
+        {
+          provide: EventEmitter2,
+          useValue: {
+            emit: jest.fn(),
+          },
         },
       ],
     }).compile();
@@ -44,7 +51,7 @@ describe("BitfinexGateway", () => {
         symbol: "ADAUST",
         timestamp: Date.now(),
         amount: 30,
-        price: 0.386,
+        price: 0.38,
       },
     };
 

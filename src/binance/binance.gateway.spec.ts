@@ -36,14 +36,14 @@ describe("BinanceGateway", () => {
   });
 
   it("should place a buy order", () => {
-    const amount = 50;
-    const price = 0.3858;
+    const amount = 78.1;
+    const price = 0.384;
 
     const event: OrderEvent = {
       data: {
         exchange: "BINANCE",
         id: generateNumericId(),
-        type: "SELL",
+        type: "BUY",
         symbol: "ADAUSDT",
         timestamp: Date.now(),
         amount,

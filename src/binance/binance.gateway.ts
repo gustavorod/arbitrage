@@ -23,8 +23,9 @@ export class BinanceGateway implements OnGatewayInit {
   private clientId: string;
   private clientSecret: string;
   private isSubscribed: boolean = false;
-  private isBalanceUpdated;
-  boolean = false;
+  private lastBalanceUpdate: number;
+  private MIN_SECONDS_BALANCE: number = 5;
+  private isSocketOpen: boolean = false;
 
   constructor(
     private readonly configService: ConfigService,
@@ -34,6 +35,7 @@ export class BinanceGateway implements OnGatewayInit {
     this.tradingSymbols = this.configService.get<string>("SYMBOLS").split(",");
     this.clientId = this.configService.get<string>("BINANCE_CLIENT_ID");
     this.clientSecret = this.configService.get<string>("BINANCE_CLIENT_SECRET");
+    this.lastBalanceUpdate = Date.now() - this.MIN_SECONDS_BALANCE * 1000;
   }
 
   getBalanceAll(): Map<string, number> {
@@ -90,11 +92,12 @@ export class BinanceGateway implements OnGatewayInit {
     this.clientSocket = new WebSocket("wss://ws-api.binance.com:443/ws-api/v3");
     this.clientSocket.on("open", (event) => {
       this.accountStatus();
+      this.isSocketOpen = true;
     });
 
     // Listen for messages from the Binance WebSocket API
     this.clientSocket.on("message", (event) => {
-      this.message(event);
+      this.messagePrivate(event);
     });
 
     // Log any errors from the Binance WebSocket API
@@ -135,7 +138,12 @@ export class BinanceGateway implements OnGatewayInit {
   }
 
   accountStatus() {
-    this.isBalanceUpdated = true;
+    const diffSeconds = (Date.now() - this.lastBalanceUpdate) / 1000;
+
+    if (diffSeconds < this.MIN_SECONDS_BALANCE) {
+      return;
+    }
+
     // Account status
     const payload = {
       apiKey: this.configService.get<string>("BINANCE_CLIENT_ID"),
@@ -155,6 +163,8 @@ export class BinanceGateway implements OnGatewayInit {
         params,
       })
     );
+
+    this.lastBalanceUpdate = Date.now();
   }
 
   updateBalances(balances) {
@@ -164,22 +174,44 @@ export class BinanceGateway implements OnGatewayInit {
       const asset = balance.asset; //.replace("USDT", "USD");
       this.balances.set(asset, parseFloat(balance.free));
     });
+
+    let temp = "";
+    this.balances.forEach((value, key) => {
+      if (key != undefined && value != undefined && value > 1) {
+        temp += key + ": " + value + " | ";
+      }
+    });
+
+    //console.log(`BALANCE@${this.exchangeCode}: ${temp}`);
   }
 
-  message(data) {
+  messagePrivate(data) {
     const message = JSON.parse(data.toString());
     const code = message.code || message.error?.code || 0;
 
-    if (!this.isBalanceUpdated) {
-      this.accountStatus();
-    }
+    //console.log(`MESSAGE@${this.exchangeCode}: ${JSON.stringify(message)}`);
+
+    this.accountStatus();
 
     if (code < 0) {
       console.error(`ERROR@${this.exchangeCode}: ${JSON.stringify(message)}`);
     } else if (code === 0) {
       if (message.result?.balances) {
         this.updateBalances(message.result.balances);
-      } else if (message.s) {
+      } else if (message.result) {
+        console.log(`RESULT@${this.exchangeCode}: ${JSON.stringify(message)}`);
+      }
+    }
+  }
+
+  message(data) {
+    const message = JSON.parse(data.toString());
+    const code = message.code || message.error?.code || 0;
+
+    if (code < 0) {
+      console.error(`ERROR@${this.exchangeCode}: ${JSON.stringify(message)}`);
+    } else if (code === 0) {
+      if (message.s) {
         let tradingPair: string = message["s"];
         //tradingPair = tradingPair.replace("USDT", "USD");
 
@@ -193,10 +225,17 @@ export class BinanceGateway implements OnGatewayInit {
           askQty: parseFloat(message.A), // best ask qty
         };
 
-        this.eventEmitter.emit("ticker.created", new TickerEvent(normalized));
+        this.eventEmitter.emitAsync(
+          "ticker.created",
+          new TickerEvent(normalized)
+        );
       } else if (message.result) {
         console.log(`RESULT@${this.exchangeCode}: ${JSON.stringify(message)}`);
       }
+    }
+
+    if (this.isSocketOpen) {
+      this.accountStatus();
     }
   }
 
@@ -223,7 +262,7 @@ export class BinanceGateway implements OnGatewayInit {
       side: type, // BUY or SELL
       type: "LIMIT",
       price,
-      quantity: amount,
+      quantity: parseFloat(amount.toFixed(1)),
       timeInForce: "GTC",
       timestamp: Date.now(),
       recvWindow: 5000,
@@ -243,7 +282,6 @@ export class BinanceGateway implements OnGatewayInit {
 
     console.log(`ORDER@${this.exchangeCode}: ${JSON.stringify(final)}`);
     this.clientSocket.send(JSON.stringify(final));
-    this.isBalanceUpdated = false;
 
     return true;
   }
@@ -251,7 +289,7 @@ export class BinanceGateway implements OnGatewayInit {
   async transferTo(event: TransferEvent) {
     const eventData = event.data;
 
-    const balance = this.getBalance(eventData.symbol.replace("USDT", "USD"));
+    const balance = this.getBalance(eventData.symbol);
     if (eventData.amount > balance) {
       throw new Error(
         `ERROR@${this.exchangeCode}: Insufficient balance for ${eventData.symbol} | ${balance} < ${eventData.amount}`
@@ -261,7 +299,7 @@ export class BinanceGateway implements OnGatewayInit {
     let payload: any = {
       coin: eventData.symbol,
       address: eventData.toAddress,
-      amount: eventData.amount,
+      amount: parseFloat(eventData.amount.toFixed(1)),
       timestamp: Date.now(),
       recvWindow: 5000,
     };
@@ -276,29 +314,31 @@ export class BinanceGateway implements OnGatewayInit {
     const signParams = this.sign(payload, null, false);
     const query = signParams.params + "&signature=" + signParams.signature;
 
-    const { data } = await firstValueFrom(
-      this.httpService
-        .post(
-          `https://api.binance.com/sapi/v1/capital/withdraw/apply?${query}`,
-          {},
-          {
-            headers: {
-              "X-MBX-APIKEY": this.clientId,
-            },
-          }
-        )
-        .pipe(
-          catchError((error: AxiosError) => {
-            console.error(
-              `ERROR@${this.exchangeCode}: ${JSON.stringify(
+    try {
+      const { data } = await firstValueFrom(
+        this.httpService
+          .post(
+            `https://api.binance.com/sapi/v1/capital/withdraw/apply?${query}`,
+            {},
+            {
+              headers: {
+                "X-MBX-APIKEY": this.clientId,
+              },
+            }
+          )
+          .pipe(
+            catchError((error: AxiosError) => {
+              throw `ERROR@${this.exchangeCode}: ${JSON.stringify(
                 error.response.data
-              )}`
-            );
-            throw "An error happened!";
-          })
-        )
-    );
-
-    return data.id;
+              )}`;
+            })
+          )
+      );
+      return data.id;
+    } catch (error) {
+      // Handle the error here
+      console.error(error);
+      return null;
+    }
   }
 }

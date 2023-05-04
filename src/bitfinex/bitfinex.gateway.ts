@@ -133,9 +133,18 @@ export class BitfinexGateway implements OnGatewayInit {
   updateBalances(data) {
     data.forEach((balance) => {
       if (balance[0] === "exchange") {
-        this.balances.set(balance[1], balance[2]);
+        this.balances.set(balance[1].replace("UST", "USDT"), balance[2]);
       }
     });
+
+    let temp = "";
+    this.balances.forEach((value, key) => {
+      if (key != undefined && value != undefined && value > 1) {
+        temp += key + ": " + value + " | ";
+      }
+    });
+
+    //console.log(`BALANCE@${this.exchangeCode}: ${temp}`);
   }
 
   message(data) {
@@ -145,8 +154,9 @@ export class BitfinexGateway implements OnGatewayInit {
       this.channelTradingPairs.set(message.chanId, message.pair);
     } else if (Array.isArray(message)) {
       // Wallet balances
-      if (message[1] === "ws") {
-        this.updateBalances(message[2]);
+      if (message[1] === "ws" || message[1] === "wu") {
+        const balances = message[1] === "wu" ? [message[2]] : message[2];
+        this.updateBalances(balances);
         this.subscribeToChannels();
       } else if (message[1] === "n") {
         console.log("Order request: ", message);
@@ -200,7 +210,7 @@ export class BitfinexGateway implements OnGatewayInit {
               askQty: asksTemp[0].amount, // best ask qty
             };
 
-            this.eventEmitter.emit(
+            this.eventEmitter.emitAsync(
               "ticker.created",
               new TickerEvent(normalized)
             );
@@ -219,7 +229,7 @@ export class BitfinexGateway implements OnGatewayInit {
 
     const { id, timestamp, type, symbol, amount, price } = event.data;
 
-    const balanceSymbol = type === "BUY" ? "UST" : symbol.replace("USDT", "");
+    const balanceSymbol = type === "BUY" ? "USDT" : symbol.replace("USDT", "");
     const pair = `t${symbol.replace("USDT", "UST")}`;
 
     const balance = this.getBalance(balanceSymbol);
@@ -238,7 +248,7 @@ export class BitfinexGateway implements OnGatewayInit {
     }
 
     const amountSignal = type === "BUY" ? maxAmount : -maxAmount;
-    const expiration = Date.now() + 1000 * 900; // 15 minutes
+    const expiration = Date.now() + 1000 * 300; // 5 minutes
 
     const body = {
       cid: id,
@@ -255,7 +265,6 @@ export class BitfinexGateway implements OnGatewayInit {
     console.log(`ORDER@${this.exchangeCode}: ${JSON.stringify(newOrder)}`);
     this.clientSocket.send(JSON.stringify(newOrder));
 
-    this.CAN_TRADE = false;
     return true;
   }
 
@@ -287,7 +296,7 @@ export class BitfinexGateway implements OnGatewayInit {
     let method;
     if (eventData.symbol === "XRP") {
       method = "RIPPLE";
-    } else if (eventData.symbol === "UST") {
+    } else if (eventData.symbol === "USDT") {
       method = "TETHERUSDTPLY";
     } else {
       method = eventData.symbol;

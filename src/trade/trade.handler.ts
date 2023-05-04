@@ -24,12 +24,13 @@ type Deal = {
 export class TickerEventHandler implements OnGatewayInit {
   private bestDeals: Map<string, Deal> = new Map();
   private pairExchangeOffers: Map<string, Map<string, TickerEvent>> = new Map();
-  private MIN_MARGIN: number = 0.5;
-  private MIN_SECONDS: number = 5;
-  private MIN_SECONDS_TRADE: number = 60;
-  private MIN_SECONDS_TRANSFER: number = 60 * 13;
-  private TRANSFER_DIFF: number = 25;
-  private MAX_BUY_USDT: number = 30;
+  private MIN_MARGIN: number = 0.7;
+  private MIN_SECONDS: number = 2;
+  private MIN_SECONDS_TRADE: number = 20;
+  private MIN_SECONDS_TRANSFER: number = 60 * 21;
+  private TRANSFER_DIFF: number = 20;
+  private MAX_BUY_USDT: number = 50;
+  private MIN_BUY_USDT: number = 10;
   private canTrade: boolean = true;
   private canTransfer: boolean = true;
   private tradingSymbols: Array<string>;
@@ -44,8 +45,8 @@ export class TickerEventHandler implements OnGatewayInit {
   ) {
     this.tradingSymbols = this.configService.get<string>("SYMBOLS").split(",");
     this.tradingSymbols.push("USDT");
-    this.lastTransfer = Date.now();
     this.lastTrade = Date.now() - this.MIN_SECONDS_TRADE * 1000;
+    this.lastTransfer = Date.now(); // - this.MIN_SECONDS_TRANSFER * 1000;
   }
 
   afterInit(server: any) {
@@ -75,7 +76,7 @@ export class TickerEventHandler implements OnGatewayInit {
       }
     });
 
-    this.equilibrateBalancesHalfHalf();
+    //this.equilibrateBalancesHalfHalf();
   }
 
   printDeal(deal: Deal) {
@@ -124,7 +125,7 @@ export class TickerEventHandler implements OnGatewayInit {
       const diffSeconds = (deal.timestamp - bestDeal.timestamp) / 1000;
       if (
         deal.margin > this.MIN_MARGIN /*bestDeal.margin*/ &&
-        diffSeconds > 180
+        diffSeconds > this.MIN_SECONDS_TRADE
       ) {
         newBestDeal = deal;
         newBestDeal.totalTrades = bestDeal.totalTrades;
@@ -143,7 +144,7 @@ export class TickerEventHandler implements OnGatewayInit {
         this.closeDeal(newBestDeal);
       }
 
-      if (newBestDeal.margin > this.MIN_MARGIN || isFirst) {
+      if (/*newBestDeal.margin > this.MIN_MARGIN ||*/ isFirst) {
         this.printDeal(newBestDeal);
       }
 
@@ -233,8 +234,8 @@ export class TickerEventHandler implements OnGatewayInit {
     const buyData = deal.buyAt.data;
     const sellData = deal.sellAt.data;
 
-    const priceBuy: number = Number(buyData.ask.toFixed(4));
-    const priceSell: number = Number(sellData.bid.toFixed(4));
+    const priceBuy: number = Number((buyData.ask + 0.0002).toFixed(4));
+    const priceSell: number = Number((sellData.bid - 0.002).toFixed(4));
 
     const buyUsdBalance = Math.min(
       this.getBalance(buyData.exchange, "USDT") * 0.95,
@@ -248,37 +249,48 @@ export class TickerEventHandler implements OnGatewayInit {
       sellData.symbol.replace("USDT", "")
     );
 
-    // Buy and sell the same amount
+    // Buy and sell the same amount respecting the limits
     const amount: number = Number(
-      Math.min(buyMaxAmount, sellSymbolBalance).toFixed(6)
+      Math.min(
+        buyMaxAmount,
+        sellSymbolBalance,
+        Math.abs(buyData.askQty),
+        Math.abs(sellData.bidQty)
+      ).toFixed(1)
     );
 
-    const buyAtEvent = new OrderEvent({
-      exchange: buyData.exchange,
-      type: "BUY",
-      amount,
-      price: priceBuy,
-      symbol: buyData.symbol,
-      timestamp: Date.now(),
-      id: generateNumericId(),
-    });
+    if (amount * priceBuy < this.MIN_BUY_USDT) {
+      console.log(
+        `Error@MIN_BUY_USDT: was not achieved ${amount} x ${priceBuy} < ${this.MIN_BUY_USDT}`
+      );
+    } else {
+      const buyAtEvent = new OrderEvent({
+        exchange: buyData.exchange,
+        type: "BUY",
+        amount,
+        price: priceBuy,
+        symbol: buyData.symbol,
+        timestamp: Date.now(),
+        id: generateNumericId(),
+      });
 
-    const sellAtEvent = new OrderEvent({
-      exchange: sellData.exchange,
-      type: "SELL",
-      amount,
-      price: priceSell,
-      symbol: sellData.symbol,
-      timestamp: Date.now(),
-      id: generateNumericId(),
-    });
+      const sellAtEvent = new OrderEvent({
+        exchange: sellData.exchange,
+        type: "SELL",
+        amount,
+        price: priceSell,
+        symbol: sellData.symbol,
+        timestamp: Date.now(),
+        id: generateNumericId(),
+      });
 
-    this.lastTrade = Date.now();
+      this.lastTrade = Date.now();
 
-    this.eventEmitter.emit("order.created", buyAtEvent);
-    this.eventEmitter.emit("order.created", sellAtEvent);
+      this.eventEmitter.emitAsync("order.created", buyAtEvent);
+      this.eventEmitter.emitAsync("order.created", sellAtEvent);
 
-    console.log("Trade", deal);
+      console.log("Trade Done: ", deal);
+    }
   }
 
   equilibrateBalancesHalfHalf() {
@@ -301,15 +313,11 @@ export class TickerEventHandler implements OnGatewayInit {
 
     this.tradingSymbols.forEach((key) => {
       const valueBinance: number = balanceBinance.get(key) || 0;
-      const valueBitfinex: number =
-        balanceBitfinex.get(key.replace("USDT", "UST")) || 0;
+      const valueBitfinex: number = balanceBitfinex.get(key) || 0;
 
       const difference = valueBinance - valueBitfinex;
       const transferFrom = difference > 0 ? "BINANCE" : "BITFINEX";
-      const existingValue: number =
-        difference > 0 ? valueBitfinex : valueBinance;
-      const transferAmount =
-        Math.floor((valueBinance + valueBitfinex) / 2) - existingValue;
+      const transferAmount = Math.floor(Math.abs(difference) / 2);
       const perc = (transferAmount / (valueBinance + valueBitfinex)) * 100;
 
       if (perc > this.TRANSFER_DIFF && transferAmount > 1) {
@@ -326,17 +334,14 @@ export class TickerEventHandler implements OnGatewayInit {
           id: generateNumericId(),
           exchange: transferFrom,
           timestamp: Date.now(),
-          symbol:
-            transferFrom === "BITFINEX" ? key.replace("USDT", "UST") : key,
+          symbol: key,
           amount: transferAmount,
           toAddress,
         });
 
-        console.log("transferEvent: ", transferEvent);
-        this.eventEmitter.emit("transfer.created", transferEvent);
+        this.eventEmitter.emitAsync("transfer.created", transferEvent);
+        this.lastTransfer = Date.now();
       }
     });
-
-    this.lastTransfer = Date.now();
   }
 }
