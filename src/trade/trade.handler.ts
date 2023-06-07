@@ -24,15 +24,15 @@ type Deal = {
 export class TickerEventHandler implements OnGatewayInit {
   private bestDeals: Map<string, Deal> = new Map();
   private pairExchangeOffers: Map<string, Map<string, TickerEvent>> = new Map();
-  private MIN_MARGIN: number = 0.7;
-  private MIN_SECONDS: number = 2;
-  private MIN_SECONDS_TRADE: number = 20;
-  private MIN_SECONDS_TRANSFER: number = 60 * 21;
-  private TRANSFER_DIFF: number = 20;
-  private MAX_BUY_USDT: number = 50;
-  private MIN_BUY_USDT: number = 10;
-  private canTrade: boolean = true;
-  private canTransfer: boolean = true;
+  private readonly MIN_MARGIN: number = 0.1;
+  private readonly MIN_SECONDS_DIFF: number = 5;
+  private readonly MIN_SECONDS_TRADE: number = 30;
+  private readonly MIN_SECONDS_TRANSFER: number = 60 * 21;
+  private readonly TRANSFER_DIFF: number = 20;
+  private readonly MAX_BUY_USDT: number = 50;
+  private readonly MIN_BUY_USDT: number = 10;
+  private readonly canTrade: boolean = true;
+  private readonly canTransfer: boolean = true;
   private tradingSymbols: Array<string>;
   private lastTransfer: number;
   private lastTrade: number;
@@ -141,10 +141,10 @@ export class TickerEventHandler implements OnGatewayInit {
       if (newBestDeal.margin > this.MIN_MARGIN) {
         newBestDeal.totalTrades++;
         newBestDeal.totalMargins.push(newBestDeal.margin);
-        this.closeDeal(newBestDeal);
+        //this.closeDeal(newBestDeal);
       }
 
-      if (/*newBestDeal.margin > this.MIN_MARGIN ||*/ isFirst) {
+      if (newBestDeal.margin > this.MIN_MARGIN || isFirst) {
         this.printDeal(newBestDeal);
       }
 
@@ -170,7 +170,14 @@ export class TickerEventHandler implements OnGatewayInit {
     );
 
     // Maximum time difference between the two prices
-    if (timeDiffSeconds > this.MIN_SECONDS) {
+    if (timeDiffSeconds > this.MIN_SECONDS_DIFF) {
+      console.log(
+        `Time@${a.data.exchange}: ${new Date(a.data.timestamp).toISOString()}`
+      );
+      console.log(
+        `Time@${b.data.exchange}: ${new Date(b.data.timestamp).toISOString()}`
+      );
+      console.log("timeDiffSeconds: ", timeDiffSeconds);
       return null;
     }
 
@@ -225,6 +232,22 @@ export class TickerEventHandler implements OnGatewayInit {
       return;
     }
 
+    if (deal.buyAt.data.symbol !== "BTCUSDT") {
+      return;
+    }
+
+    const buyerAllowed =
+      deal.buyAt.data.exchange === "BINANCE" ||
+      deal.buyAt.data.exchange === "BITFINEX";
+    const sellerAllowed =
+      deal.sellAt.data.exchange === "BINANCE" ||
+      deal.sellAt.data.exchange === "BITFINEX";
+    const allowed = buyerAllowed && sellerAllowed;
+
+    if (!allowed) {
+      return;
+    }
+
     const timeDiffSeconds = Math.abs((Date.now() - this.lastTrade) / 1000);
 
     if (timeDiffSeconds < this.MIN_SECONDS_TRADE) {
@@ -234,8 +257,8 @@ export class TickerEventHandler implements OnGatewayInit {
     const buyData = deal.buyAt.data;
     const sellData = deal.sellAt.data;
 
-    const priceBuy: number = Number((buyData.ask + 0.0002).toFixed(4));
-    const priceSell: number = Number((sellData.bid - 0.002).toFixed(4));
+    const priceBuy: number = Number((buyData.ask - 1).toFixed(1));
+    const priceSell: number = Number((sellData.bid + 1).toFixed(1));
 
     const buyUsdBalance = Math.min(
       this.getBalance(buyData.exchange, "USDT") * 0.95,
@@ -289,7 +312,7 @@ export class TickerEventHandler implements OnGatewayInit {
       this.eventEmitter.emitAsync("order.created", buyAtEvent);
       this.eventEmitter.emitAsync("order.created", sellAtEvent);
 
-      console.log("Trade Done: ", deal);
+      console.log("EXECUTED: ", deal);
     }
   }
 

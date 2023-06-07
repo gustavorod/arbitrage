@@ -9,6 +9,9 @@ import { CurrencyModule } from "./currency/currency.module";
 import { BybitModule } from "./bybit/bybit.module";
 import { DydxModule } from "./dydx/dydx.module";
 import { EventEmitterModule } from "@nestjs/event-emitter";
+import { CexModule } from "./cex/cex.module";
+import { CoinbaseModule } from "./coinbase/coinbase.module";
+import { BityprecoModule } from "./bitypreco/bitypreco.module";
 
 @Module({
   imports: [
@@ -25,17 +28,18 @@ import { EventEmitterModule } from "@nestjs/event-emitter";
       // set this to `true` if you want to emit the removeListener event
       removeListener: false,
       // the maximum amount of listeners that can be assigned to an event
-      maxListeners: 10,
+      maxListeners: 20,
       // show event name in memory leak message when more than maximum amount of listeners is assigned
       verboseMemoryLeak: false,
       // disable throwing uncaughtException if an error event is emitted and it has no listeners
       ignoreErrors: false,
     }),
-    //BybitModule,
-    BinanceModule,
-    BitfinexModule,
-    //CurrencyModule,
-    //DydxModule,
+    BityprecoModule,
+    BybitModule,
+    CexModule,
+    CoinbaseModule,
+    CurrencyModule,
+    DydxModule,
     TradeModule,
   ],
   controllers: [AppController],

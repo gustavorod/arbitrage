@@ -1,10 +1,11 @@
 import { WebSocketGateway, OnGatewayInit } from "@nestjs/websockets";
 import { Logger } from "@nestjs/common";
 import * as WebSocket from "ws";
-import { EventBus } from "@nestjs/cqrs";
 import { TickerEvent } from "../trade/entities/ticker.entity";
 import { ConfigService } from "@nestjs/config";
+import { EventEmitter2 } from "@nestjs/event-emitter";
 
+/* Needs to be refactored for books */
 @WebSocketGateway()
 export class DydxGateway implements OnGatewayInit {
   private readonly logger: Logger = new Logger(DydxGateway.name);
@@ -14,7 +15,7 @@ export class DydxGateway implements OnGatewayInit {
 
   constructor(
     private readonly configService: ConfigService,
-    private readonly eventBus: EventBus
+    private eventEmitter: EventEmitter2
   ) {
     this.tradingSymbols = this.configService.get<string>("SYMBOLS").split(",");
   }
@@ -50,7 +51,6 @@ export class DydxGateway implements OnGatewayInit {
 
   message(data) {
     const message = JSON.parse(data.toString());
-
     if (!message.contents) {
       return;
     }
@@ -71,7 +71,9 @@ export class DydxGateway implements OnGatewayInit {
     if (currentAsks.length > 0 && currentBids.length > 0) {
       const bestBid = currentBids[0];
       const bestAsk = currentAsks[0];
-      const symbolNormalized = message.id.replace("-", "");
+      const symbolNormalized = message.id
+        .replace("-", "")
+        .replace("USD", "USDT");
 
       const normalized = {
         exchange: "DYDX", // exchange
@@ -83,7 +85,10 @@ export class DydxGateway implements OnGatewayInit {
         askQty: bestAsk.size, // best ask qty
       };
 
-      this.eventBus.publish(new TickerEvent(normalized));
+      this.eventEmitter.emitAsync(
+        "ticker.created",
+        new TickerEvent(normalized)
+      );
     }
   }
 }

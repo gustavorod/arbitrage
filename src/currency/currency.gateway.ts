@@ -1,9 +1,9 @@
 import { WebSocketGateway, OnGatewayInit } from "@nestjs/websockets";
 import { Logger } from "@nestjs/common";
 import * as WebSocket from "ws";
-import { EventBus } from "@nestjs/cqrs";
 import { TickerEvent } from "../trade/entities/ticker.entity";
 import { ConfigService } from "@nestjs/config";
+import { EventEmitter2 } from "@nestjs/event-emitter";
 
 @WebSocketGateway()
 export class CurrencyGateway implements OnGatewayInit {
@@ -12,7 +12,7 @@ export class CurrencyGateway implements OnGatewayInit {
 
   constructor(
     private readonly configService: ConfigService,
-    private readonly eventBus: EventBus
+    private eventEmitter: EventEmitter2
   ) {
     this.tradingSymbols = this.configService.get<string>("SYMBOLS").split(",");
   }
@@ -27,7 +27,7 @@ export class CurrencyGateway implements OnGatewayInit {
 
     websocket.on("open", (event) => {
       const tradingPairs = this.tradingSymbols.map((symbol) => {
-        return `${symbol}/USD`;
+        return `${symbol}/USDT`;
       });
 
       const config = {
@@ -75,7 +75,10 @@ export class CurrencyGateway implements OnGatewayInit {
           askQty: message.payload.ofrQty, // best ask qty
         };
 
-        this.eventBus.publish(new TickerEvent(normalized));
+        this.eventEmitter.emitAsync(
+          "ticker.created",
+          new TickerEvent(normalized)
+        );
       }
     }
   }

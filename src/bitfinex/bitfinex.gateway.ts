@@ -16,6 +16,7 @@ type Book = {
   price: number;
   count: number;
   amount: number;
+  timestamp: number;
 };
 
 @WebSocketGateway()
@@ -82,7 +83,7 @@ export class BitfinexGateway implements OnGatewayInit {
           event: "subscribe",
           channel: "book",
           symbol: tradingPair,
-          prec: "P0",
+          prec: "P1",
           freq: "F0",
         })
       );
@@ -166,11 +167,23 @@ export class BitfinexGateway implements OnGatewayInit {
         const symbol = this.channelTradingPairs.get(channel);
 
         if (payload !== "hb") {
-          let bidsTemp = this.bids.get(symbol) || [];
-          let asksTemp = this.asks.get(symbol) || [];
+          const now = Date.now();
+          let bidsTemp = (this.bids.get(symbol) || []).filter(
+            (book) => (now - book.timestamp) / 1000 <= 300
+          ); //2 seconds
+          let asksTemp = (this.asks.get(symbol) || []).filter(
+            (book) => (now - book.timestamp) / 1000 <= 300
+          );
+
+          let payloarNormalized;
+          if (Array.isArray(payload[0])) {
+            payloarNormalized = payload;
+          } else {
+            payloarNormalized = [payload];
+          }
 
           //Update order book
-          payload.forEach((book) => {
+          payloarNormalized.forEach((book) => {
             const price = book[0];
             const count = book[1];
             const amount = book[2];
@@ -179,6 +192,7 @@ export class BitfinexGateway implements OnGatewayInit {
               price,
               count,
               amount,
+              timestamp: Date.now(),
             };
 
             if (count == 0) {
@@ -189,25 +203,55 @@ export class BitfinexGateway implements OnGatewayInit {
               }
             } else {
               if (amount > 0) {
+                bidsTemp = bidsTemp.filter((item) => item.price !== price);
                 bidsTemp.push(newBook);
               } else {
+                asksTemp = asksTemp.filter((item) => item.price !== price);
                 asksTemp.push(newBook);
               }
             }
           });
 
-          this.bids.set(symbol, bidsTemp);
-          this.asks.set(symbol, asksTemp);
+          bidsTemp.sort((a, b) => {
+            if (a.price < b.price) {
+              return 1;
+            }
+            if (a.price > b.price) {
+              return -1;
+            }
+            return 0;
+          });
 
-          if (bidsTemp[0] && asksTemp[0]) {
+          asksTemp.sort((a, b) => {
+            if (a.price < b.price) {
+              return -1;
+            }
+            if (a.price > b.price) {
+              return 1;
+            }
+            return 0;
+          });
+
+          this.bids.set(symbol, bidsTemp); //descending
+          this.asks.set(symbol, asksTemp); //ascending
+
+          let bidSelected = bidsTemp[0];
+          let askSelected = asksTemp[0];
+
+          if (bidSelected && askSelected) {
+            /*console.log(
+              `BID: ${bidSelected.price} | ASK: ${
+                askSelected.price
+              } @ ${Date.now()}`
+            );*/
             const normalized = {
               exchange: this.exchangeCode, // exchange
               timestamp: Date.now(), // timestamp
               symbol: symbol.replace("UST", "USDT"), // symbol
-              bid: bidsTemp[0].price, // best bid price
-              bidQty: bidsTemp[0].amount, // best bid qty
-              ask: asksTemp[0].price, // best ask price
-              askQty: asksTemp[0].amount, // best ask qty
+              bid: bidSelected.price, // best bid price
+              bidQty: bidSelected.amount, // best bid qty
+              ask: askSelected.price, // best ask price
+              askQty: askSelected.amount, // best ask qty
             };
 
             this.eventEmitter.emitAsync(
@@ -248,7 +292,7 @@ export class BitfinexGateway implements OnGatewayInit {
     }
 
     const amountSignal = type === "BUY" ? maxAmount : -maxAmount;
-    const expiration = Date.now() + 1000 * 300; // 5 minutes
+    const expiration = Date.now() + 1000 * 60 * 30; // 30 minutes
 
     const body = {
       cid: id,
