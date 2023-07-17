@@ -24,7 +24,7 @@ type Deal = {
 export class TickerEventHandler implements OnGatewayInit {
   private bestDeals: Map<string, Deal> = new Map();
   private pairExchangeOffers: Map<string, Map<string, TickerEvent>> = new Map();
-  private readonly MIN_MARGIN: number = 0.1;
+  private MIN_MARGIN: number;
   private readonly MIN_SECONDS_DIFF: number = 5;
   private readonly MIN_SECONDS_TRADE: number = 30;
   private readonly MIN_SECONDS_TRANSFER: number = 60 * 21;
@@ -43,6 +43,7 @@ export class TickerEventHandler implements OnGatewayInit {
     private readonly binanceGateway: BinanceGateway,
     private readonly bitfinexGateway: BitfinexGateway
   ) {
+    this.MIN_MARGIN = this.configService.get<number>("MARGIN") || 0.1;
     this.tradingSymbols = this.configService.get<string>("SYMBOLS").split(",");
     this.tradingSymbols.push("USDT");
     this.lastTrade = Date.now() - this.MIN_SECONDS_TRADE * 1000;

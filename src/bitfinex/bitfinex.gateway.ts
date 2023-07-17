@@ -93,21 +93,23 @@ export class BitfinexGateway implements OnGatewayInit {
   }
 
   authenticate() {
-    const authNonce = Date.now() * 1000; // Generate an ever increasing, single use value. (a timestamp satisfies this criteria)
-    const authPayload = "AUTH" + authNonce; // Compile the authentication payload, this is simply the string 'AUTH' prepended to the nonce value
-    const authSig = crypto
-      .HmacSHA384(authPayload, this.apiSecret)
-      .toString(crypto.enc.Hex); // The authentication payload is hashed using the private key, the resulting hash is output as a hexadecimal string
+    if (this.apiSecret) {
+      const authNonce = Date.now() * 1000; // Generate an ever increasing, single use value. (a timestamp satisfies this criteria)
+      const authPayload = "AUTH" + authNonce; // Compile the authentication payload, this is simply the string 'AUTH' prepended to the nonce value
+      const authSig = crypto
+        .HmacSHA384(authPayload, this.apiSecret)
+        .toString(crypto.enc.Hex); // The authentication payload is hashed using the private key, the resulting hash is output as a hexadecimal string
 
-    const payload = {
-      apiKey: this.apiKey, //API key
-      authSig, //Authentication Sig
-      authNonce,
-      authPayload,
-      event: "auth", // The connection event, will always equal 'auth'
-    };
+      const payload = {
+        apiKey: this.apiKey, //API key
+        authSig, //Authentication Sig
+        authNonce,
+        authPayload,
+        event: "auth", // The connection event, will always equal 'auth'
+      };
 
-    this.clientSocket.send(JSON.stringify(payload));
+      this.clientSocket.send(JSON.stringify(payload));
+    }
   }
 
   afterInit(): void {

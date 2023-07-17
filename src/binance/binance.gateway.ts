@@ -138,33 +138,35 @@ export class BinanceGateway implements OnGatewayInit {
   }
 
   accountStatus() {
-    const diffSeconds = (Date.now() - this.lastBalanceUpdate) / 1000;
+    if (this.clientSecret) {
+      const diffSeconds = (Date.now() - this.lastBalanceUpdate) / 1000;
 
-    if (diffSeconds < this.MIN_SECONDS_BALANCE) {
-      return;
+      if (diffSeconds < this.MIN_SECONDS_BALANCE) {
+        return;
+      }
+
+      // Account status
+      const payload = {
+        apiKey: this.configService.get<string>("BINANCE_CLIENT_ID"),
+        recvWindow: 5000,
+        timestamp: Date.now(),
+      };
+
+      const params = {
+        ...payload,
+        signature: this.sign(payload).signature,
+      };
+
+      this.clientSocket.send(
+        JSON.stringify({
+          id: generateNumericId(),
+          method: "account.status",
+          params,
+        })
+      );
+
+      this.lastBalanceUpdate = Date.now();
     }
-
-    // Account status
-    const payload = {
-      apiKey: this.configService.get<string>("BINANCE_CLIENT_ID"),
-      recvWindow: 5000,
-      timestamp: Date.now(),
-    };
-
-    const params = {
-      ...payload,
-      signature: this.sign(payload).signature,
-    };
-
-    this.clientSocket.send(
-      JSON.stringify({
-        id: generateNumericId(),
-        method: "account.status",
-        params,
-      })
-    );
-
-    this.lastBalanceUpdate = Date.now();
   }
 
   updateBalances(balances) {
