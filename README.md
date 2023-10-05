@@ -45,17 +45,15 @@ $ yarn run start:dev
 $ yarn run start:prod
 ```
 
-## Test
+## Output example
 
 ```bash
-# unit tests
-$ yarn run test
-
-# e2e tests
-$ yarn run test:e2e
-
-# test coverage
-$ yarn run test:cov
+TradingPair@BTCUSDT
+Timestamp@2023-10-05T12:05:34.486Z
+Buy@BITYPRECO: 27721@2023-10-05T12:05:34.064Z
+Sell@BINANCE: 27744.42@2023-10-05T12:05:34.486Z
+Trades: 4 => 0.0784,0.0784,0.0845,0.0845
+Margin: 23.4200 / 0.0845% / 0.0814% (Price difference / Last margin / Average margin)
 ```
 
 ## Support
